@@ -4,12 +4,26 @@
   "description": "Canary-based secret leak detection and safe redaction for AI application logs and artifacts.",
   "type": "module",
   "license": "MIT",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
-  "bin": { "jev-sentinel": "./dist/cli.js" },
-  "files": ["dist", "README.md", "LICENSE", "SECURITY.md"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "jev-sentinel": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "SECURITY.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "check": "tsc --noEmit",
@@ -17,10 +31,28 @@
     "release:check": "npm run check && npm test && npm run build && npm pack --dry-run",
     "prepack": "npm run build"
   },
-  "devDependencies": { "@types/node": "^24.5.2", "tsx": "^4.20.5", "typescript": "^5.9.2" },
-  "repository": { "type": "git", "url": "git+https://github.com/gbesse/jev-sentinel.git" },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gbesse/jev-sentinel.git"
+  },
   "homepage": "https://github.com/gbesse/jev-sentinel#readme",
-  "bugs": { "url": "https://github.com/gbesse/jev-sentinel/issues" },
-  "publishConfig": { "access": "public" },
-  "keywords": ["secret-scanning", "redaction", "canary", "ai-security", "ci", "jev"]
+  "bugs": {
+    "url": "https://github.com/gbesse/jev-sentinel/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "keywords": [
+    "secret-scanning",
+    "redaction",
+    "canary",
+    "ai-security",
+    "ci",
+    "jev"
+  ]
 }
