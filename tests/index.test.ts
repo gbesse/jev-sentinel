@@ -43,3 +43,38 @@ test("constant-time helper handles exact secret matching", () => {
   assert.equal(constantTimeContains("prefix-sensitive-value-suffix", "sensitive-value"), true);
   assert.equal(constantTimeContains("clean", "sensitive-value"), false);
 });
+
+test("findings redact every neighboring canary before trimming context", () => {
+  const first = { name: "first", value: "FIRST_CANARY", variants: { raw: "FIRST_CANARY" } };
+  const second = { name: "second", value: "SECOND_CANARY", variants: { raw: "SECOND_CANARY" } };
+  const long = { name: "long", value: "LONG_CANARY_WITH_A_SENSITIVE_SUFFIX", variants: { raw: "LONG_CANARY_WITH_A_SENSITIVE_SUFFIX" } };
+  const leaks = detectLeaks(`${long.value} ${first.value} ${second.value}`, [first, second, long]);
+  assert.equal(leaks.length, 3);
+  const report = JSON.stringify(leaks);
+  for (const canary of [first, second, long]) assert.ok(!report.includes(canary.value));
+  assert.ok(!report.includes("SENSITIVE_SUFFIX"));
+});
+
+test("canaries in object keys are detected without exposing them in paths", () => {
+  const canary = createCanary("key");
+  const leaks = detectLeaks({ [canary.value]: "clean", child: canary.value }, [canary], canary.value);
+  assert.equal(leaks.length, 2);
+  assert.ok(!JSON.stringify(leaks).includes(canary.value));
+  assert.throws(() => assertNoLeaks({ [canary.value]: "clean" }, [canary]), /canary leak/);
+});
+
+test("overlapping canaries are fully masked in findings", () => {
+  const a = { name: "a", value: "abcde", variants: { raw: "abcde" } };
+  const b = { name: "b", value: "defgh", variants: { raw: "defgh" } };
+  const leaks = detectLeaks("abcdefgh", [a, b]);
+  assert.equal(leaks.length, 2);
+  assert.ok(leaks.every(leak => leak.excerpt === "[REDACTED_CANARY]"));
+});
+
+test("global secret-key expressions redact every matching field", () => {
+  const secretKeys = /token/g;
+  const output = redact({ token: "first", tokenAgain: "second" }, { secretKeys });
+  assert.equal(output.token, "[REDACTED]");
+  assert.equal(output.tokenAgain, "[REDACTED]");
+  assert.equal(secretKeys.lastIndex, 0);
+});
