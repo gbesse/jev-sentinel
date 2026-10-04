@@ -32,20 +32,27 @@ function canaryMatches(text: string, canaries: Canary[]): CanaryMatch[] {
 const CANARY_MASK = "[REDACTED_CANARY]";
 function maskMatches(text: string, matches: CanaryMatch[]) {
   const spans: { start: number; end: number; maskedStart: number }[] = [];
-  for (const match of [...matches].sort((a, b) => a.offset - b.offset)) {
+  const sorted = [...matches].sort((a, b) => a.offset - b.offset);
+  for (const match of sorted) {
     const last = spans.at(-1);
     if (last && match.offset <= last.end) last.end = Math.max(last.end, match.end);
     else spans.push({ start: match.offset, end: match.end, maskedStart: 0 });
   }
   let masked = "";
   let cursor = 0;
+  let matchIndex = 0;
+  const maskedOffsets = new Map<number, number>();
   for (const span of spans) {
     masked += text.slice(cursor, span.start);
     span.maskedStart = masked.length;
     masked += CANARY_MASK;
+    while (matchIndex < sorted.length && sorted[matchIndex]!.offset < span.end) {
+      maskedOffsets.set(sorted[matchIndex]!.offset, span.maskedStart);
+      matchIndex++;
+    }
     cursor = span.end;
   }
-  return { text: masked + text.slice(cursor), spans };
+  return { text: masked + text.slice(cursor), maskedOffsets };
 }
 
 function maskCanaries(text: string, canaries: Canary[]): string {
@@ -75,8 +82,8 @@ export function detectLeaks(value: unknown, canaries: Canary[], rootPath = "$", 
       const matches = canaryMatches(current, canaries);
       const masked = maskMatches(current, matches);
       for (const match of matches) {
-        const span = masked.spans.find(span => span.start <= match.offset && span.end >= match.end)!;
-        const excerpt = masked.text.slice(Math.max(0, span.maskedStart - 24), span.maskedStart + CANARY_MASK.length + 24);
+        const maskedOffset = masked.maskedOffsets.get(match.offset)!;
+        const excerpt = masked.text.slice(Math.max(0, maskedOffset - 24), maskedOffset + CANARY_MASK.length + 24);
         leaks.push({ canary: maskCanaries(match.canary, canaries), variant: maskCanaries(match.variant, canaries), path: maskCanaries(path, canaries), offset: match.offset, excerpt });
       }
       return;
