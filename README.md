@@ -19,6 +19,8 @@ if (report.leaks.length) throw new Error("Secret reached an observable sink");
 
 Sentinel detects raw, URL-encoded, Base64, hexadecimal and JSON-escaped canaries. Findings contain a redacted excerpt, never the canary itself.
 
+Object keys are scanned as well as values. Paths and context mask every known canary before excerpts are shortened, so neighboring or overlapping matches cannot expose another canary through a finding.
+
 ## Artifact scanner
 
 ```sh

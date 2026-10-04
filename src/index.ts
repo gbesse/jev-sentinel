@@ -14,7 +14,43 @@ const DEFAULT_TOKEN_PATTERNS = [
 ];
 
 function assert(condition: unknown, message: string): asserts condition { if (!condition) throw new Error(message); }
-function escapeRegExp(value: string): string { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }
+interface CanaryMatch { canary: string; variant: string; offset: number; end: number; }
+
+function canaryMatches(text: string, canaries: Canary[]): CanaryMatch[] {
+  const matches: CanaryMatch[] = [];
+  for (const canary of canaries) for (const [variant, needle] of Object.entries(canary.variants)) {
+    if (!needle) continue;
+    let offset = text.indexOf(needle);
+    while (offset >= 0) {
+      matches.push({ canary: canary.name, variant, offset, end: offset + needle.length });
+      offset = text.indexOf(needle, offset + 1);
+    }
+  }
+  return matches;
+}
+
+const CANARY_MASK = "[REDACTED_CANARY]";
+function maskMatches(text: string, matches: CanaryMatch[]) {
+  const spans: { start: number; end: number; maskedStart: number }[] = [];
+  for (const match of [...matches].sort((a, b) => a.offset - b.offset)) {
+    const last = spans.at(-1);
+    if (last && match.offset <= last.end) last.end = Math.max(last.end, match.end);
+    else spans.push({ start: match.offset, end: match.end, maskedStart: 0 });
+  }
+  let masked = "";
+  let cursor = 0;
+  for (const span of spans) {
+    masked += text.slice(cursor, span.start);
+    span.maskedStart = masked.length;
+    masked += CANARY_MASK;
+    cursor = span.end;
+  }
+  return { text: masked + text.slice(cursor), spans };
+}
+
+function maskCanaries(text: string, canaries: Canary[]): string {
+  return maskMatches(text, canaryMatches(text, canaries)).text;
+}
 
 export function createCanary(name = "secret", bytes = 24): Canary {
   assert(/^[a-zA-Z0-9_-]{1,64}$/.test(name), "Canary name must be 1-64 safe characters");
@@ -36,16 +72,12 @@ export function detectLeaks(value: unknown, canaries: Canary[], rootPath = "$", 
   const leaks: Leak[] = [];
   const visit = (current: unknown, path: string) => {
     if (typeof current === "string") {
-      for (const canary of canaries) for (const [variant, needle] of Object.entries(canary.variants)) {
-        if (!needle) continue;
-        let offset = current.indexOf(needle);
-        while (offset >= 0) {
-          const start = Math.max(0, offset - 24);
-          const end = Math.min(current.length, offset + needle.length + 24);
-          const excerpt = `${current.slice(start, offset)}[REDACTED_CANARY]${current.slice(offset + needle.length, end)}`;
-          leaks.push({ canary: canary.name, variant, path, offset, excerpt });
-          offset = current.indexOf(needle, offset + needle.length);
-        }
+      const matches = canaryMatches(current, canaries);
+      const masked = maskMatches(current, matches);
+      for (const match of matches) {
+        const span = masked.spans.find(span => span.start <= match.offset && span.end >= match.end)!;
+        const excerpt = masked.text.slice(Math.max(0, span.maskedStart - 24), span.maskedStart + CANARY_MASK.length + 24);
+        leaks.push({ canary: maskCanaries(match.canary, canaries), variant: maskCanaries(match.variant, canaries), path: maskCanaries(path, canaries), offset: match.offset, excerpt });
       }
       return;
     }
@@ -53,9 +85,12 @@ export function detectLeaks(value: unknown, canaries: Canary[], rootPath = "$", 
     if (seen.has(current)) return;
     seen.add(current);
     if (Array.isArray(current)) current.forEach((item, index) => visit(item, `${path}[${index}]`));
-    else for (const [key, item] of Object.entries(current)) visit(item, `${path}.${key}`);
+    else Object.entries(current).forEach(([key, item], index) => {
+      visit(key, `${path}[key:${index}]`);
+      visit(item, `${path}.${maskCanaries(key, canaries)}`);
+    });
   };
-  visit(value, rootPath);
+  visit(value, maskCanaries(rootPath, canaries));
   return deduplicateLeaks(leaks);
 }
 
@@ -79,10 +114,12 @@ export interface RedactOptions { secretKeys?: RegExp; extraKeys?: string[]; toke
 export function redact<T>(value: T, options: RedactOptions = {}): T {
   const replacement = options.replacement ?? "[REDACTED]";
   const extra = new Set((options.extraKeys ?? []).map(key => key.toLowerCase()));
-  const keyPattern = options.secretKeys ?? DEFAULT_SECRET_KEYS;
+  const configuredKeys = options.secretKeys ?? DEFAULT_SECRET_KEYS;
+  const keyPattern = new RegExp(configuredKeys.source, configuredKeys.flags);
   const patterns = options.tokenPatterns ?? DEFAULT_TOKEN_PATTERNS;
   const seen = new WeakMap<object, unknown>();
   const visit = (current: unknown, key?: string): unknown => {
+    keyPattern.lastIndex = 0;
     if (key && (keyPattern.test(key) || extra.has(key.toLowerCase()))) return replacement;
     if (typeof current === "string") return patterns.reduce((text, pattern) => text.replace(new RegExp(pattern.source, pattern.flags), replacement), current);
     if (!current || typeof current !== "object") return current;
