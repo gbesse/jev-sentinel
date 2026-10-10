@@ -20,6 +20,7 @@
   },
   "files": [
     "dist",
+    "examples",
     "README.md",
     "LICENSE",
     "SECURITY.md"
@@ -29,7 +30,8 @@
     "check": "tsc --noEmit",
     "test": "node --import tsx --test tests/*.test.ts",
     "release:check": "npm run check && npm test && npm run build && npm pack --dry-run",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "demo:key-canary": "node --import tsx examples/key-canary.ts"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
