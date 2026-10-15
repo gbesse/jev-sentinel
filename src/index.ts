@@ -180,8 +180,8 @@ export async function scanPathReport(target:string,canaries:Canary[],options:Sca
     const rawPath=relative(rootStat.isDirectory()?root:resolve(root,'..'),path)||path;
     leaks.push(...detectLeaks(rawPath,canaries,'[file path]'));
     if(stat.size>maxFileBytes){skipped.push({path:display(path),reason:'oversized'});return;}
-    const handle=await open(path,'r');let bytesRead:number;const buffer=Buffer.alloc(maxFileBytes+1);
-    try{({bytesRead}=await handle.read(buffer,0,buffer.length,0));}finally{await handle.close();}
+    const handle=await open(path,'r');let bytesRead=0;const buffer=Buffer.alloc(maxFileBytes+1);
+    try{while(bytesRead<buffer.length){const result=await handle.read(buffer,bytesRead,buffer.length-bytesRead,bytesRead);if(!result.bytesRead)break;bytesRead+=result.bytesRead;}}finally{await handle.close();}
     if(bytesRead>maxFileBytes){skipped.push({path:display(path),reason:'oversized'});return;}
     filesScanned++;leaks.push(...detectLeaks(buffer.subarray(0,bytesRead).toString('utf8'),canaries,display(path)));
   };
