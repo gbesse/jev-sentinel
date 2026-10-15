@@ -78,3 +78,17 @@ test("global secret-key expressions redact every matching field", () => {
   assert.equal(output.tokenAgain, "[REDACTED]");
   assert.equal(secretKeys.lastIndex, 0);
 });
+
+test('oversized eligible files report incomplete coverage rather than clean',async()=>{
+ const {scanPathReport}=await import('../src/index.js');const directory=await mkdtemp(join(tmpdir(),'sentinel-coverage-')),canary=createCanary('synthetic');
+ await writeFile(join(directory,'large.log'),canary.value.repeat(10));const report=await scanPathReport(directory,[canary],{maxFileBytes:64});
+ assert.equal(report.status,'incomplete');assert.equal(report.clean,null);assert.equal(report.filesScanned,0);assert.equal(report.skipped[0]?.reason,'oversized');
+});
+test('canaries in filenames are reported without leaking them',async()=>{
+ const {scanPathReport}=await import('../src/index.js');const directory=await mkdtemp(join(tmpdir(),'sentinel-path-')),canary=createCanary('synthetic');
+ await writeFile(join(directory,canary.value+'.log'),'clean body');const report=await scanPathReport(directory,[canary]);assert.equal(report.status,'leaks');assert.ok(!JSON.stringify(report).includes(canary.value));
+});
+test('redaction preserves own prototype-like keys without changing output prototype',()=>{
+ const input=JSON.parse('{"__proto__":{"password":"synthetic-private"},"constructor":"ordinary"}'),output=redact(input);
+ assert.equal(Object.getPrototypeOf(output),Object.prototype);assert.ok(Object.hasOwn(output,'__proto__'));assert.equal(output.__proto__.password,'[REDACTED]');assert.equal(input.__proto__.password,'synthetic-private');
+});

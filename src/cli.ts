@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from "node:fs/promises";
-import { createCanary, scanPath, type Canary } from "./index.js";
+import { createCanary, scanPathReport, type Canary } from "./index.js";
 
 const [command, target, ...args] = process.argv.slice(2);
 if (command === "generate") {
@@ -14,9 +14,9 @@ if (command === "generate") {
   }
   try {
     const payload = JSON.parse(await readFile(args[canaryFileIndex + 1]!, "utf8")) as Canary | Canary[];
-    const leaks = await scanPath(target, Array.isArray(payload) ? payload : [payload]);
-    console.log(JSON.stringify({ clean: leaks.length === 0, leaks }, null, 2));
-    if (leaks.length) process.exitCode = 2;
+    const report = await scanPathReport(target, Array.isArray(payload) ? payload : [payload]);
+    console.log(JSON.stringify(report,null,2));
+    if(report.status!=='clean')process.exitCode=report.status==='leaks'?2:3;
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 2;
