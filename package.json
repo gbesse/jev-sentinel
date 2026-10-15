@@ -1,6 +1,6 @@
 {
   "name": "@gbesse/jev-sentinel",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Canary-based secret leak detection and safe redaction for AI application logs and artifacts.",
   "type": "module",
   "license": "MIT",

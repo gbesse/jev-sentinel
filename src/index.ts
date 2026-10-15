@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
-import { lstat, readdir, readFile } from "node:fs/promises";
+import { lstat, readdir, readFile, open } from "node:fs/promises";
 import { extname, join, relative, resolve } from "node:path";
 
 export interface Canary { name: string; value: string; variants: Record<string, string>; }
@@ -140,7 +140,7 @@ export function redact<T>(value: T, options: RedactOptions = {}): T {
     }
     const output: Record<string, unknown> = {};
     seen.set(current, output);
-    for (const [childKey, child] of Object.entries(current)) output[childKey] = visit(child, childKey);
+    for (const [childKey, child] of Object.entries(current)) Object.defineProperty(output,childKey,{value:visit(child,childKey),enumerable:true,writable:true,configurable:true});
     return output;
   };
   return visit(value) as T;
@@ -154,27 +154,42 @@ export async function probe<T>(options: { canaries: Canary[]; run: (secrets: Rec
   return { result, leaks };
 }
 
-export async function scanPath(target: string, canaries: Canary[], options: ScanOptions = {}): Promise<Leak[]> {
-  const root = resolve(target);
-  const rootStat = await lstat(root);
-  assert(!rootStat.isSymbolicLink(), "Refusing to scan a symlink root");
-  const maxFileBytes = options.maxFileBytes ?? 2_000_000;
-  const ignore = new Set([".git", "node_modules", "dist", ...options.ignore ?? []]);
-  const extensions = new Set(options.extensions ?? [".txt", ".log", ".json", ".jsonl", ".md", ".html", ".xml", ".yaml", ".yml", ".csv"]);
-  const leaks: Leak[] = [];
-  const scan = async (path: string) => {
-    const stat = await lstat(path);
-    if (stat.isSymbolicLink()) return;
-    if (stat.isDirectory()) {
-      for (const entry of await readdir(path)) if (!ignore.has(entry)) await scan(join(path, entry));
-      return;
-    }
-    if (!stat.isFile() || stat.size > maxFileBytes || (rootStat.isDirectory() && !extensions.has(extname(path).toLowerCase()))) return;
-    const content = await readFile(path, "utf8");
-    leaks.push(...detectLeaks(content, canaries, relative(rootStat.isDirectory() ? root : resolve(root, ".."), path) || path));
+export interface ScanReport {
+  status: 'clean'|'leaks'|'incomplete';
+  clean: boolean|null;
+  leaks: Leak[];
+  filesScanned: number;
+  skipped: {path:string;reason:'oversized'|'symlink'}[];
+  ignoredEntries: number;
+  unsupportedFiles: number;
+  maxFileBytes: number;
+}
+export async function scanPathReport(target:string,canaries:Canary[],options:ScanOptions={}):Promise<ScanReport>{
+  const root=resolve(target),rootStat=await lstat(root);
+  assert(!rootStat.isSymbolicLink(),'Refusing to scan a symlink root');
+  const maxFileBytes=options.maxFileBytes??2000000;
+  assert(Number.isSafeInteger(maxFileBytes)&&maxFileBytes>0&&maxFileBytes<=100000000,'FR : limite de fichier invalide. EN: invalid file limit. ES: límite de archivo no válido.');
+  const ignore=new Set(['.git','node_modules','dist',...(options.ignore??[])]),extensions=new Set(options.extensions??['.txt','.log','.json','.jsonl','.md','.html','.xml','.yaml','.yml','.csv']);
+  const leaks:Leak[]=[],skipped:ScanReport['skipped']=[];let filesScanned=0,ignoredEntries=0,unsupportedFiles=0;
+  const display=(path:string)=>maskCanaries(relative(rootStat.isDirectory()?root:resolve(root,'..'),path)||path,canaries);
+  const scan=async(path:string):Promise<void>=>{
+    const stat=await lstat(path);
+    if(stat.isSymbolicLink()){skipped.push({path:display(path),reason:'symlink'});return;}
+    if(stat.isDirectory()){for(const entry of await readdir(path)){if(ignore.has(entry)){ignoredEntries++;continue;}await scan(join(path,entry));}return;}
+    if(!stat.isFile()||(rootStat.isDirectory()&&!extensions.has(extname(path).toLowerCase()))){unsupportedFiles++;return;}
+    const rawPath=relative(rootStat.isDirectory()?root:resolve(root,'..'),path)||path;
+    leaks.push(...detectLeaks(rawPath,canaries,'[file path]'));
+    if(stat.size>maxFileBytes){skipped.push({path:display(path),reason:'oversized'});return;}
+    const handle=await open(path,'r');let bytesRead=0;const buffer=Buffer.alloc(maxFileBytes+1);
+    try{while(bytesRead<buffer.length){const result=await handle.read(buffer,bytesRead,buffer.length-bytesRead,bytesRead);if(!result.bytesRead)break;bytesRead+=result.bytesRead;}}finally{await handle.close();}
+    if(bytesRead>maxFileBytes){skipped.push({path:display(path),reason:'oversized'});return;}
+    filesScanned++;leaks.push(...detectLeaks(buffer.subarray(0,bytesRead).toString('utf8'),canaries,display(path)));
   };
-  await scan(root);
-  return leaks;
+  await scan(root);const unique=deduplicateLeaks(leaks);
+  return {status:unique.length?'leaks':skipped.length?'incomplete':'clean',clean:unique.length?false:skipped.length?null:true,leaks:unique,filesScanned,skipped,ignoredEntries,unsupportedFiles,maxFileBytes};
+}
+export async function scanPath(target:string,canaries:Canary[],options:ScanOptions={}):Promise<Leak[]>{
+ return (await scanPathReport(target,canaries,options)).leaks;
 }
 
 export function constantTimeContains(text: string, secret: string): boolean {
